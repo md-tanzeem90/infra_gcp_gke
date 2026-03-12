@@ -1,7 +1,6 @@
+# providers.tf
 provider "kubernetes" {
-  host                   = google_container_cluster.dev.endpoint
+  host                   = module.gke.cluster_endpoint
   token                  = data.google_client_config.default.access_token
-  cluster_ca_certificate = base64decode(
-    google_container_cluster.dev.master_auth[0].cluster_ca_certificate
-  )
+  cluster_ca_certificate = base64decode(module.gke.cluster_ca_certificate)
 }
