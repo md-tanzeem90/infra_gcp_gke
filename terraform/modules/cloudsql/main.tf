@@ -15,7 +15,7 @@ resource "google_sql_database_instance" "postgres" {
 }
 
 resource "google_sql_database" "postgres_db" {
-  name     = "postgres"
+  name     = "postgres_app_db"
   instance = google_sql_database_instance.postgres.name
 }
 
