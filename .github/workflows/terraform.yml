@@ -39,9 +39,7 @@ jobs:
         project_id: ${{ secrets.GCP_PROJECT }}
 
     - name: Terraform Init
-      run: |
-        terraform init \
-          run: terraform init -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" -backend-config="prefix=terraform/state"
+      run: terraform init -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" -backend-config="prefix=terraform/state"
 
     - name: Terraform Format Check
       run: terraform fmt -check
