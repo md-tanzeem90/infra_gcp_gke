@@ -1,14 +1,28 @@
-E-Commerce Infrastructure on GCP using Terraform
+Modern Cloud Native Infrastructure on GCP using Terraform
 
-This repository contains Terraform code to provision the infrastructure required to run an e-commerce platform on Google Cloud Platform.
+Production ready Terraform infrastructure for deploying modern containerized web applications on Google Cloud Platform.
 
-The infrastructure provisions a Kubernetes environment along with supporting services required by a modern ecommerce stack.
+This repository provides a reusable infrastructure foundation for building scalable platforms using Google Kubernetes Engine, Cloud SQL, and Redis.
+
+It is designed to support modern workloads such as:
+
+Web applications
+
+API platforms
+
+Microservices architectures
+
+Background workers
+
+Data processing services
+
+The infrastructure is modular, environment driven, and ready for extension with CI/CD and observability tooling.
 
 Architecture Overview
 
-The Terraform configuration creates the following components:
+The Terraform configuration provisions the following core platform components:
 
-VPC Network
+VPC network
 
 Subnet for application workloads
 
@@ -16,11 +30,11 @@ Google Kubernetes Engine (GKE) cluster
 
 Cloud SQL PostgreSQL database
 
-Memorystore Redis instance
+Google Memorystore Redis instance
 
-Networking components required for connectivity
+Networking configuration for secure service connectivity
 
-These services form the core infrastructure for deploying a scalable ecommerce application such as Saleor.
+Together these services provide the foundation for running scalable container based workloads on Kubernetes.
 
 Repository Structure
 terraform/
@@ -35,17 +49,35 @@ terraform/
          ├── main.tf
          ├── variables.tf
          └── terraform.tfvars
-modules
+Modules
 
-Reusable Terraform modules for each infrastructure component.
+Reusable Terraform modules defining infrastructure components such as:
 
-environments
+networking
 
-Environment-specific configurations such as development, staging, or production.
+Kubernetes clusters
+
+databases
+
+caching services
+
+Modules are designed to be reusable across multiple environments and projects.
+
+Environments
+
+Environment specific configurations such as:
+
+development
+
+staging
+
+production
+
+Each environment composes infrastructure modules to create a complete deployment.
 
 Prerequisites
 
-Before running this project ensure the following tools are installed:
+Install the following tools before running this project:
 
 Terraform
 
@@ -55,16 +87,16 @@ kubectl
 
 Git
 
-You must also have a Google Cloud project created.
+You must also have an existing Google Cloud project with permissions to create infrastructure resources.
 
 Setup
 
-Authenticate with Google Cloud:
+Authenticate with Google Cloud
 
 gcloud auth login
-gcloud config set project proj-ecom-dev
+gcloud config set project <your-project-id>
 
-Enable required APIs:
+Enable required APIs
 
 gcloud services enable \
 container.googleapis.com \
@@ -74,42 +106,62 @@ redis.googleapis.com \
 servicenetworking.googleapis.com
 Deployment
 
-Navigate to the environment directory:
+Navigate to the environment directory
 
 cd terraform/environments/dev
 
-Initialize Terraform:
+Initialize Terraform
 
 terraform init
 
-Review the plan:
+Review the infrastructure plan
 
 terraform plan
 
-Apply the infrastructure:
+Provision the infrastructure
 
 terraform apply
+
+Terraform will create the infrastructure components defined in the configuration.
+
 Destroy Infrastructure
 
-To remove all resources created by Terraform:
+To remove all resources created by Terraform
 
 terraform destroy
+
+This will delete all infrastructure associated with the selected environment.
+
 Notes
 
-The .terraform directory and Terraform state files are excluded from Git using .gitignore.
-Terraform downloads providers automatically during initialization.
+.terraform directory and Terraform state files are excluded using .gitignore
+
+Providers are automatically downloaded during terraform init
+
+Infrastructure modules are designed to be reusable across environments
 
 Future Improvements
 
-Add Helm deployment for the ecommerce application
+Potential enhancements for this infrastructure include:
 
-Configure Ingress and TLS
+Helm based application deployment pipelines
 
-Implement CI/CD pipelines
+Kubernetes Ingress configuration
 
-Add monitoring and logging
+TLS and certificate management
+
+CI/CD integration (GitHub Actions / Jenkins / Azure DevOps)
+
+Monitoring and observability stack (Prometheus / Grafana)
+
+Horizontal autoscaling and performance tuning
+
+Contributing
+
+Contributions, improvements, and feedback are welcome.
+
+Feel free to open issues or pull requests to enhance the infrastructure modules or add additional capabilities.
 
 Author
 
 Tanzeem
-# infra_gcp_gke
