@@ -16,11 +16,11 @@ resource "google_sql_database_instance" "postgres" {
 
 resource "google_sql_database" "postgres_db" {
   name     = "postgres"
-  instance = google_sql_database_instance.saleor_postgres.name
+  instance = google_sql_database_instance.postgres.name
 }
 
 resource "google_sql_user" "db_user" {
   name     = "db_user"
-  instance = google_sql_database_instance.saleor_postgres.name
+  instance = google_sql_database_instance.postgres.name
   password = var.db_password
 }
