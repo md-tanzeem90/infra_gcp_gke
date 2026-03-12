@@ -7,6 +7,7 @@ on:
   pull_request:
 
 jobs:
+
   terraform:
     name: Terraform Deploy
     runs-on: ubuntu-latest
@@ -22,9 +23,73 @@ jobs:
 
     - name: Debug directory
       run: |
+        echo "Current directory:"
         pwd
+        echo "Repository structure:"
         ls -R
-        
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: 1.7.5
+
+    - name: Authenticate to GCP
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+
+    - name: Setup gcloud
+      uses: google-github-actions/setup-gcloud@v2
+      with:
+        project_id: ${{ secrets.GCP_PROJECT }}
+
+    - name: Terraform Init
+      run: |
+        terraform init \
+        -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+        -backend-config="prefix=terraform/state"
+
+    - name: Auto Format Terraform Files
+      run: |
+        echo "Running terraform fmt to auto format files"
+        terraform fmt -recursive
+
+    - name: Terraform Format Check
+      run: |
+        echo "Checking terraform formatting"
+        terraform fmt -check -recursive
+
+    - name: Terraform Validate
+      run: terraform validate
+
+    - name: Terraform Plan
+      run: terraform plan
+
+    - name: Terraform Apply
+      if: github.ref == 'refs/heads/main'
+      run: terraform apply -auto-approve
+
+
+
+  terraform-destroy:
+
+    name: Terraform Destroy (Manual Approval)
+    runs-on: ubuntu-latest
+    needs: terraform
+    if: github.ref == 'refs/heads/main'
+
+    environment:
+      name: destroy-approval
+
+    defaults:
+      run:
+        working-directory: terraform/environments/dev
+
+    steps:
+
+    - name: Checkout Repo
+      uses: actions/checkout@v4
+
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v3
 
@@ -39,17 +104,13 @@ jobs:
         project_id: ${{ secrets.GCP_PROJECT }}
 
     - name: Terraform Init
-      run: terraform init -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" -backend-config="prefix=terraform/state"
+      run: |
+        terraform init \
+        -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+        -backend-config="prefix=terraform/state"
 
-    - name: Terraform Format Check
-      run: terraform fmt -check
+    - name: Terraform Destroy Plan
+      run: terraform plan -destroy
 
-    - name: Terraform Validate
-      run: terraform validate
-
-    - name: Terraform Plan
-      run: terraform plan
-
-    - name: Terraform Apply
-      if: github.ref == 'refs/heads/main'
-      run: terraform apply -auto-approve
+    - name: Terraform Destroy
+      run: terraform destroy -auto-approve
