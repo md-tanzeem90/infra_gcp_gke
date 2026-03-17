@@ -22,7 +22,12 @@ module "network" {
 }
 
 module "gke" {
-  source     = "../../modules/gke"
+  source = "./modules/gke"
+
+  environment = var.environment
+  project_id  = var.project_id
+  region      = var.region
+
   network    = module.network.vpc_name
   subnetwork = module.network.subnet_name
 }
