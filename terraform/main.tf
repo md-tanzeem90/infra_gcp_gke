@@ -37,7 +37,7 @@ module "gke" {
 }
 
 module "cloudsql" {
-  source = "../../modules/cloudsql"
+  source = "./modules/cloudsql"
 
   project_id  = var.project_id
   region      = var.region
@@ -47,7 +47,7 @@ module "cloudsql" {
 }
 
 module "redis" {
-  source = "../../modules/redis"
+  source = "./modules/redis"
 
   environment = var.environment
   project_id  = var.project_id
