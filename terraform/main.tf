@@ -18,7 +18,11 @@ provider "google" {
 }
 
 module "network" {
-  source = "../../modules/network"
+  source = "./modules/network"
+
+  environment = var.environment
+  project_id  = var.project_id
+  region      = var.region
 }
 
 module "gke" {
