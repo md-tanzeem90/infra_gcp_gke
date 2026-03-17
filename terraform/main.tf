@@ -7,10 +7,14 @@ terraform {
   }
 }
 
+locals {
+  env        = var.environment
+  project_id = var.project_id
+}
+
 provider "google" {
-  project = "proj-ecom-dev"
+  project = local.project_id
   region  = "us-central1"
-  #credentials = file("C:/Users/mohpasha2/.gcp/terraform-key.json")
 }
 
 module "network" {
