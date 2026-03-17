@@ -39,13 +39,18 @@ module "gke" {
 module "cloudsql" {
   source = "../../modules/cloudsql"
 
-  region      = "us-central1"
-  db_password = "ChangeThisPassword123"
+  project_id  = var.project_id
+  region      = var.region
+  environment = var.environment
+
+  db_password = var.db_password
 }
 
 module "redis" {
   source = "../../modules/redis"
 
-  region  = "us-central1"
-  network = module.network.vpc_id
+  environment = var.environment
+  project_id  = var.project_id
+  region      = var.region
+  network = module.network.vpc_name
 }
