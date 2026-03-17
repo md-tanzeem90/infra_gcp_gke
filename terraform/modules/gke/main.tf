@@ -1,8 +1,10 @@
-resource "google_container_cluster" "dev" {
-  name     = "ecom-dev-cluster"
-  location = "us-central1"
+resource "google_container_cluster" "gke" {
+  name     = "ecom-${var.environment}-cluster"
+  location = var.region
 
-  deletion_protection = false
+  project = var.project_id
+
+  deletion_protection = var.environment == "prod" ? true : false
 
   network    = var.network
   subnetwork = var.subnetwork
@@ -14,19 +16,25 @@ resource "google_container_cluster" "dev" {
     services_secondary_range_name = "services"
   }
 
-
   release_channel {
     channel = "REGULAR"
   }
 
   workload_identity_config {
-    workload_pool = "${data.google_project.project.project_id}.svc.id.goog"
+    workload_pool = "${var.project_id}.svc.id.goog"
   }
 
   vertical_pod_autoscaling {
     enabled = true
   }
+
+  resource_labels = {
+    environment = var.environment
+    managed_by  = "terraform"
+  }
 }
 
 
-data "google_project" "project" {}
+data "google_project" "project" {
+  project_id = var.project_id
+}
