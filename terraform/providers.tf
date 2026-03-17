@@ -11,3 +11,12 @@ provider "kubernetes" {
   cluster_ca_certificate = base64decode(module.gke.cluster_ca_certificate)
 }
 
+provider "helm" {
+  kubernetes {
+    host                   = module.gke.endpoint
+    cluster_ca_certificate = base64decode(module.gke.ca_certificate)
+    token                  = data.google_client_config.default.access_token
+  }
+}
+
+data "google_client_config" "default" {}
