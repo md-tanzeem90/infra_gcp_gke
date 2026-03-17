@@ -1,18 +1,95 @@
 name: Terraform Infrastructure CI/CD
 
 on:
-  push:
-    branches:
-      - main
-      - dev
-      - "feature/**"
-  pull_request:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment (dev or prod)"
+        required: true
+        default: "dev"
+      action:
+        description: "Action (plan/apply/destroy)"
+        required: true
+        default: "plan"
 
 jobs:
 
-  terraform:
-    name: Terraform Deploy
+  terraform-plan:
+    name: Terraform Plan
     runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: terraform
+
+    outputs:
+      env: ${{ steps.setenv.outputs.env }}
+      project_id: ${{ steps.setenv.outputs.project_id }}
+
+    steps:
+
+    - name: Checkout Repo
+      uses: actions/checkout@v4
+
+    # ✅ Set ENV + PROJECT_ID (export as outputs)
+    - name: Set environment variables
+      id: setenv
+      run: |
+        ENV=${{ github.event.inputs.environment }}
+
+        if [[ "$ENV" == "prod" ]]; then
+          PROJECT_ID=proj-ecom-prod
+        else
+          PROJECT_ID=proj-ecom-$ENV
+        fi
+
+        echo "env=$ENV" >> $GITHUB_OUTPUT
+        echo "project_id=$PROJECT_ID" >> $GITHUB_OUTPUT
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+
+    - name: Authenticate to GCP
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+
+    - name: Setup gcloud
+      uses: google-github-actions/setup-gcloud@v2
+
+    - name: Terraform Init
+      run: |
+        terraform init \
+          -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+          -backend-config="prefix=terraform/${{ steps.setenv.outputs.env }}"
+
+    # ✅ Generate plan file
+    - name: Terraform Plan (Save)
+      run: |
+        terraform plan \
+          -out=tfplan \
+          -var="environment=${{ steps.setenv.outputs.env }}" \
+          -var="project_id=${{ steps.setenv.outputs.project_id }}" \
+          -var="db_password=${{ secrets.DB_PASSWORD }}"
+
+    # ✅ Upload plan artifact
+    - name: Upload Plan Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: tfplan-${{ steps.setenv.outputs.env }}
+        path: terraform/tfplan
+
+
+
+  terraform-apply:
+    name: Terraform Apply (Approved)
+    runs-on: ubuntu-latest
+    needs: terraform-plan
+
+    if: github.event.inputs.action == 'apply'
+
+    environment:
+      name: ${{ github.event.inputs.environment == 'prod' && 'prod-approval' || 'dev-auto' }}
 
     defaults:
       run:
@@ -23,33 +100,15 @@ jobs:
     - name: Checkout Repo
       uses: actions/checkout@v4
 
-    # ✅ Detect branch → environment
-    - name: Detect branch and set environment
-      run: |
-        BRANCH=${GITHUB_REF##*/}
-
-        SAFE_BRANCH=$(echo $BRANCH | sed 's/\//-/g')
-
-        echo "Branch: $BRANCH"
-        echo "Safe Branch: $SAFE_BRANCH"
-
-        if [[ "$BRANCH" == "main" ]]; then
-          echo "ENV=prod" >> $GITHUB_ENV
-          echo "PROJECT_ID=proj-ecom-prod" >> $GITHUB_ENV
-        else
-          echo "ENV=$SAFE_BRANCH" >> $GITHUB_ENV
-          echo "PROJECT_ID=proj-ecom-$SAFE_BRANCH" >> $GITHUB_ENV
-        fi
-
-    - name: Debug values
-      run: |
-        echo "ENV=$ENV"
-        echo "PROJECT_ID=$PROJECT_ID"
+    # ✅ Download saved plan
+    - name: Download Plan Artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: tfplan-${{ needs.terraform-plan.outputs.env }}
+        path: terraform
 
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v3
-      with:
-        terraform_version: 1.7.5
 
     - name: Authenticate to GCP
       uses: google-github-actions/auth@v2
@@ -59,49 +118,24 @@ jobs:
     - name: Setup gcloud
       uses: google-github-actions/setup-gcloud@v2
 
-    # ✅ Dynamic backend per branch
     - name: Terraform Init
       run: |
         terraform init \
           -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
-          -backend-config="prefix=terraform/${ENV}"
+          -backend-config="prefix=terraform/${{ needs.terraform-plan.outputs.env }}"
 
-    - name: Terraform Format
-      run: terraform fmt -recursive
-
-    - name: Terraform Format Check
-      run: terraform fmt -check -recursive
-
-    - name: Terraform Validate
-      run: terraform validate
-
-    # ✅ Plan with dynamic variables
-    - name: Terraform Plan
-      run: |
-        terraform plan \
-          -var="environment=${ENV}" \
-          -var="project_id=${PROJECT_ID}" \
-          -var="db_password=${{ secrets.DB_PASSWORD }}"
-
-    # ✅ Apply only on push (not PR)
-    - name: Terraform Apply
-      if: github.event_name == 'push'
-      run: |
-        terraform apply -auto-approve \
-          -var="environment=${ENV}" \
-          -var="project_id=${PROJECT_ID}" \
-          -var="db_password=${{ secrets.DB_PASSWORD }}"
+    # ✅ Apply EXACT approved plan
+    - name: Terraform Apply Saved Plan
+      run: terraform apply -auto-approve tfplan
 
 
 
   terraform-destroy:
-
-    name: Terraform Destroy (Manual Approval)
+    name: Terraform Destroy (Approved)
     runs-on: ubuntu-latest
-    needs: terraform
+    needs: terraform-plan
 
-    # ✅ Allow destroy for non-prod only (safe)
-    if: github.ref != 'refs/heads/main'
+    if: github.event.inputs.action == 'destroy'
 
     environment:
       name: destroy-approval
@@ -115,15 +149,6 @@ jobs:
     - name: Checkout Repo
       uses: actions/checkout@v4
 
-    - name: Detect branch and set environment
-      run: |
-        BRANCH=${GITHUB_REF##*/}
-
-        SAFE_BRANCH=$(echo $BRANCH | sed 's/\//-/g')
-
-        echo "ENV=$SAFE_BRANCH" >> $GITHUB_ENV
-        echo "PROJECT_ID=proj-ecom-$SAFE_BRANCH" >> $GITHUB_ENV
-
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v3
 
@@ -139,18 +164,11 @@ jobs:
       run: |
         terraform init \
           -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
-          -backend-config="prefix=terraform/${ENV}"
-
-    - name: Terraform Destroy Plan
-      run: |
-        terraform plan -destroy \
-          -var="environment=${ENV}" \
-          -var="project_id=${PROJECT_ID}" \
-          -var="db_password=${{ secrets.DB_PASSWORD }}"
+          -backend-config="prefix=terraform/${{ github.event.inputs.environment }}"
 
     - name: Terraform Destroy
       run: |
         terraform destroy -auto-approve \
-          -var="environment=${ENV}" \
-          -var="project_id=${PROJECT_ID}" \
+          -var="environment=${{ github.event.inputs.environment }}" \
+          -var="project_id=proj-ecom-${{ github.event.inputs.environment }}" \
           -var="db_password=${{ secrets.DB_PASSWORD }}"
