@@ -18,7 +18,5 @@ resource "google_redis_instance" "redis" {
     managed_by  = "terraform"
   }
 
-  lifecycle {
-    prevent_destroy = var.environment == "prod" ? true : false
-  }
+  deletion_protection = false
 }
