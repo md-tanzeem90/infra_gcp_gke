@@ -22,7 +22,7 @@ resource "helm_release" "prometheus" {
   chart      = "kube-prometheus-stack"
 
   values = [
-    file("${path.module}/helm-values/prometheus.yaml")
+    file("${path.module}/prometheus.yaml")
   ]
 }
 
