@@ -29,11 +29,7 @@ resource "google_sql_database_instance" "postgres" {
     }
   }
 
-  deletion_protection = var.environment == "prod" ? true : false
-
-  lifecycle {
-    prevent_destroy = var.environment == "prod"
-  }
+  deletion_protection = false
 }
 
 ########################################
