@@ -11,3 +11,8 @@ variable "environment" {
   description = "Environment derived from branch"
   type        = string
 }
+
+variable "project_id" {
+  description = "GCP Project ID"
+  type        = string
+}
