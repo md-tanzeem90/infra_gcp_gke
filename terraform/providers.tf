@@ -18,4 +18,3 @@ provider "helm" {
     cluster_ca_certificate = base64decode(module.gke.cluster_ca_certificate)
   }
 }
-}
