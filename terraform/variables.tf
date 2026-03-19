@@ -9,8 +9,8 @@ variable "project_id" {
 }
 
 variable "region" {
-  type = string
-  default = "us-central1"
+  description = "GCP Region"
+  type        = string
 }
 
 variable "db_password" {
