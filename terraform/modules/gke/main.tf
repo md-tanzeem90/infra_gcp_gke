@@ -4,7 +4,7 @@ resource "google_container_cluster" "gke" {
 
   project = var.project_id
 
-  deletion_protection = var.environment == "prod" ? true : false
+  deletion_protection = false
 
   network    = var.network
   subnetwork = var.subnetwork
