@@ -18,5 +18,5 @@ resource "google_redis_instance" "redis" {
     managed_by  = "terraform"
   }
 
-  deletion_protection = false
+  
 }
