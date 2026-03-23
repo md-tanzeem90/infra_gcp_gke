@@ -22,13 +22,20 @@ resource "helm_release" "prometheus" {
   chart      = "kube-prometheus-stack"
 
   create_namespace = false
+
+  # 🔥 Stability controls
+  timeout         = 900
+  wait            = true
+  atomic          = true
   cleanup_on_fail = true
-  force_update = true
-  replace      = true
+  force_update    = true
+  replace         = true
 
   values = [
     <<EOF
-# 🚫 Disable node-level components (NOT allowed in Autopilot)
+##################################
+# Disable Autopilot-blocked components
+##################################
 nodeExporter:
   enabled: false
 
@@ -41,19 +48,101 @@ kubelet:
 kubeProxy:
   enabled: false
 
-# 🚫 Remove affinity issues
+alertmanager:
+  enabled: false
+
+##################################
+# Prometheus (lightweight + probes)
+##################################
 prometheus:
   prometheusSpec:
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "256Mi"
+      limits:
+        cpu: "300m"
+        memory: "512Mi"
+
     nodeSelector: {}
     affinity: {}
     tolerations: []
 
+    containers:
+      - name: prometheus
+        readinessProbe:
+          httpGet:
+            path: /-/ready
+            port: 9090
+          initialDelaySeconds: 90
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 10
+
+        startupProbe:
+          httpGet:
+            path: /-/ready
+            port: 9090
+          failureThreshold: 30
+          periodSeconds: 10
+
+##################################
+# Grafana (lightweight + probes)
+##################################
 grafana:
   enabled: true
 
-# Avoid kube-system interactions
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "128Mi"
+    limits:
+      cpu: "100m"
+      memory: "256Mi"
+
+  readinessProbe:
+    httpGet:
+      path: /api/health
+      port: 3000
+    initialDelaySeconds: 60
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 10
+
+  startupProbe:
+    httpGet:
+      path: /api/health
+      port: 3000
+    failureThreshold: 30
+    periodSeconds: 10
+
+##################################
+# kube-state-metrics (tuned)
+##################################
+kubeStateMetrics:
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "128Mi"
+    limits:
+      cpu: "100m"
+      memory: "256Mi"
+
+  readinessProbe:
+    httpGet:
+      path: /readyz
+      port: 8081
+    initialDelaySeconds: 60
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 10
+
+##################################
+# General rules
+##################################
 defaultRules:
   create: true
+
 EOF
   ]
 }
@@ -137,7 +226,7 @@ EOF
 }
 
 ##################################
-# Alloy Deployment (NOT DaemonSet)
+# Alloy Deployment (Autopilot-safe)
 ##################################
 resource "kubernetes_deployment_v1" "alloy" {
   depends_on = [
@@ -174,6 +263,17 @@ resource "kubernetes_deployment_v1" "alloy" {
           image = "grafana/alloy:v1.2.0"
 
           args = ["run", "/etc/alloy/config.alloy"]
+
+          resources {
+            requests = {
+              cpu    = "50m"
+              memory = "128Mi"
+            }
+            limits = {
+              cpu    = "100m"
+              memory = "256Mi"
+            }
+          }
 
           volume_mount {
             name       = "config"
