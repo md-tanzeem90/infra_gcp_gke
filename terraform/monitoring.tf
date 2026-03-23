@@ -22,12 +22,12 @@ resource "kubernetes_limit_range_v1" "monitoring_limits" {
     limit {
       type = "Container"
 
-      default_request {
+      default_request = {
         cpu    = "100m"
         memory = "128Mi"
       }
 
-      default {
+      default = {
         cpu    = "500m"
         memory = "512Mi"
       }
