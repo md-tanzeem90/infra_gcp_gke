@@ -1,21 +1,36 @@
-name: Terraform Infrastructure CI/CD
+name: Terraform CI/CD 
 
 on:
   workflow_dispatch:
     inputs:
       environment:
-        description: "Environment (dev or prod)"
+        description: Environment (dev/prod)
         required: true
-        default: "dev"
+        default: dev
+
       action:
-        description: "Action (plan/apply/destroy)"
+        description: plan/apply/destroy
         required: true
-        default: "plan"
+        default: plan
 
+      deploy_scope:
+        description: infra / helm / all
+        required: true
+        default: all
+
+      helm_target:
+        description: Optional helm release (e.g. prometheus)
+        required: false
+
+env:
+  TF_IN_AUTOMATION: true
+  TF_INPUT: false
+
+########################################
+# PLAN
+########################################
 jobs:
-
-  terraform-plan:
-    name: Terraform Plan
+  plan:
     runs-on: ubuntu-latest
 
     defaults:
@@ -27,66 +42,79 @@ jobs:
       project_id: ${{ steps.setenv.outputs.project_id }}
 
     steps:
+      - uses: actions/checkout@v4
 
-    - name: Checkout Repo
-      uses: actions/checkout@v4
+      - name: Set ENV
+        id: setenv
+        run: |
+          ENV=${{ github.event.inputs.environment }}
+          [[ "$ENV" == "prod" ]] && PROJECT_ID=proj-ecom-prod || PROJECT_ID=proj-ecom-$ENV
 
-    # ✅ Set ENV + PROJECT_ID (export as outputs)
-    - name: Set environment variables
-      id: setenv
-      run: |
-        ENV=${{ github.event.inputs.environment }}
+          echo "env=$ENV" >> $GITHUB_OUTPUT
+          echo "project_id=$PROJECT_ID" >> $GITHUB_OUTPUT
 
-        if [[ "$ENV" == "prod" ]]; then
-          PROJECT_ID=proj-ecom-prod
-        else
-          PROJECT_ID=proj-ecom-$ENV
-        fi
+      ##################################
+      # ⚡ Cache Terraform
+      ##################################
+      - name: Cache Terraform
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.terraform.d/plugin-cache
+            terraform/.terraform
+          key: ${{ runner.os }}-terraform-${{ hashFiles('**/*.tf') }}
 
-        echo "env=$ENV" >> $GITHUB_OUTPUT
-        echo "project_id=$PROJECT_ID" >> $GITHUB_OUTPUT
+      - uses: hashicorp/setup-terraform@v3
 
-    - name: Setup Terraform
-      uses: hashicorp/setup-terraform@v3
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_CREDENTIALS }}
 
-    - name: Authenticate to GCP
-      uses: google-github-actions/auth@v2
-      with:
-        credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+      - uses: google-github-actions/setup-gcloud@v2
 
-    - name: Setup gcloud
-      uses: google-github-actions/setup-gcloud@v2
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="prefix=terraform/${{ steps.setenv.outputs.env }}"
 
-    - name: Terraform Init
-      run: |
-        terraform init \
-          -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
-          -backend-config="prefix=terraform/${{ steps.setenv.outputs.env }}"
+      ##################################
+      # 🎯 Targeted Plan
+      ##################################
+      - name: Terraform Plan
+        run: |
+          TARGET=""
 
-    # ✅ Generate plan file
-    - name: Terraform Plan (Save)
-      run: |
-        terraform plan \
-          -out=tfplan \
-          -var="environment=${{ steps.setenv.outputs.env }}" \
-          -var="project_id=${{ steps.setenv.outputs.project_id }}" \
-          -var="db_password=${{ secrets.DB_PASSWORD }}"
+          if [[ "${{ github.event.inputs.deploy_scope }}" == "infra" ]]; then
+            TARGET="-target=module.network -target=module.gke"
+          elif [[ "${{ github.event.inputs.deploy_scope }}" == "helm" ]]; then
+            if [[ -n "${{ github.event.inputs.helm_target }}" ]]; then
+              TARGET="-target=helm_release.${{ github.event.inputs.helm_target }}"
+            else
+              TARGET="-target=helm_release"
+            fi
+          fi
 
-    # ✅ Upload plan artifact
-    - name: Upload Plan Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: tfplan-${{ steps.setenv.outputs.env }}
-        path: terraform/tfplan
+          terraform plan $TARGET \
+            -out=tfplan \
+            -var="environment=${{ steps.setenv.outputs.env }}" \
+            -var="project_id=${{ steps.setenv.outputs.project_id }}" \
+            -var="db_password=${{ secrets.DB_PASSWORD }}"
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ steps.setenv.outputs.env }}
+          path: terraform/tfplan
 
-
-  terraform-apply:
-    name: Terraform Apply (Approved)
+########################################
+# APPLY INFRA
+########################################
+  apply-infra:
     runs-on: ubuntu-latest
-    needs: terraform-plan
+    needs: plan
 
-    if: github.event.inputs.action == 'apply'
+    if: github.event.inputs.action == 'apply' && 
+        (github.event.inputs.deploy_scope == 'infra' || github.event.inputs.deploy_scope == 'all')
 
     environment:
       name: ${{ github.event.inputs.environment == 'prod' && 'prod-approval' || 'dev-auto' }}
@@ -96,44 +124,85 @@ jobs:
         working-directory: terraform
 
     steps:
+      - uses: actions/checkout@v4
 
-    - name: Checkout Repo
-      uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: tfplan-${{ needs.plan.outputs.env }}
+          path: terraform
 
-    # ✅ Download saved plan
-    - name: Download Plan Artifact
-      uses: actions/download-artifact@v4
-      with:
-        name: tfplan-${{ needs.terraform-plan.outputs.env }}
-        path: terraform
+      - uses: hashicorp/setup-terraform@v3
 
-    - name: Setup Terraform
-      uses: hashicorp/setup-terraform@v3
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_CREDENTIALS }}
 
-    - name: Authenticate to GCP
-      uses: google-github-actions/auth@v2
-      with:
-        credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+      - uses: google-github-actions/setup-gcloud@v2
 
-    - name: Setup gcloud
-      uses: google-github-actions/setup-gcloud@v2
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="prefix=terraform/${{ needs.plan.outputs.env }}"
 
-    - name: Terraform Init
-      run: |
-        terraform init \
-          -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
-          -backend-config="prefix=terraform/${{ needs.terraform-plan.outputs.env }}"
+      - name: Apply Infra
+        run: |
+          terraform apply -auto-approve -parallelism=20 \
+            -target=module.network \
+            -target=module.gke
 
-    # ✅ Apply EXACT approved plan
-    - name: Terraform Apply Saved Plan
-      run: terraform apply -auto-approve tfplan
-
-
-
-  terraform-destroy:
-    name: Terraform Destroy (Approved)
+########################################
+# APPLY HELM (GENERIC + SELECTIVE)
+########################################
+  apply-helm:
     runs-on: ubuntu-latest
-    needs: terraform-plan
+    needs: apply-infra
+
+    if: github.event.inputs.action == 'apply' && 
+        (github.event.inputs.deploy_scope == 'helm' || github.event.inputs.deploy_scope == 'all')
+
+    defaults:
+      run:
+        working-directory: terraform
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="prefix=terraform/${{ needs.plan.outputs.env }}"
+
+      ##################################
+      # 🔥 SMART HELM APPLY
+      ##################################
+      - name: Apply Helm (Selective or All)
+        run: |
+          if [[ -n "${{ github.event.inputs.helm_target }}" ]]; then
+            echo "Deploying specific Helm release: ${{ github.event.inputs.helm_target }}"
+            terraform apply -auto-approve -parallelism=20 \
+              -target=helm_release.${{ github.event.inputs.helm_target }}
+          else
+            echo "Deploying ALL Helm releases"
+            terraform apply -auto-approve -parallelism=20 \
+              -target=helm_release
+          fi
+
+########################################
+# DESTROY
+########################################
+  destroy:
+    runs-on: ubuntu-latest
+    needs: plan
 
     if: github.event.inputs.action == 'destroy'
 
@@ -145,30 +214,25 @@ jobs:
         working-directory: terraform
 
     steps:
+      - uses: actions/checkout@v4
 
-    - name: Checkout Repo
-      uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
 
-    - name: Setup Terraform
-      uses: hashicorp/setup-terraform@v3
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_CREDENTIALS }}
 
-    - name: Authenticate to GCP
-      uses: google-github-actions/auth@v2
-      with:
-        credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+      - uses: google-github-actions/setup-gcloud@v2
 
-    - name: Setup gcloud
-      uses: google-github-actions/setup-gcloud@v2
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="prefix=terraform/${{ github.event.inputs.environment }}"
 
-    - name: Terraform Init
-      run: |
-        terraform init \
-          -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
-          -backend-config="prefix=terraform/${{ github.event.inputs.environment }}"
-
-    - name: Terraform Destroy
-      run: |
-        terraform destroy -auto-approve \
-          -var="environment=${{ github.event.inputs.environment }}" \
-          -var="project_id=proj-ecom-${{ github.event.inputs.environment }}" \
-          -var="db_password=${{ secrets.DB_PASSWORD }}"
+      - name: Destroy
+        run: |
+          terraform destroy -auto-approve \
+            -var="environment=${{ github.event.inputs.environment }}" \
+            -var="project_id=proj-ecom-${{ github.event.inputs.environment }}" \
+            -var="db_password=${{ secrets.DB_PASSWORD }}"
