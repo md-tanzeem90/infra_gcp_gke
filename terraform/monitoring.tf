@@ -61,8 +61,8 @@ resource "helm_release" "prometheus" {
     kubernetes_limit_range_v1.monitoring_limits
   ]
 
-  name       = "prometheus"
-  namespace  = kubernetes_namespace_v1.monitoring.metadata[0].name
+  name      = "prometheus"
+  namespace = kubernetes_namespace_v1.monitoring.metadata[0].name
 
   repository = "https://prometheus-community.github.io/helm-charts"
   chart      = "kube-prometheus-stack"

@@ -1,7 +1,7 @@
 resource "google_redis_instance" "redis" {
-  name           = "ecom-${var.environment}-redis"
-  project        = var.project_id
-  region         = var.region
+  name    = "ecom-${var.environment}-redis"
+  project = var.project_id
+  region  = var.region
 
   tier           = "BASIC"
   memory_size_gb = var.environment == "prod" ? 4 : 1
@@ -18,5 +18,5 @@ resource "google_redis_instance" "redis" {
     managed_by  = "terraform"
   }
 
-  
+
 }
