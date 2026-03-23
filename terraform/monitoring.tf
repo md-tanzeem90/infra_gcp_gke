@@ -10,10 +10,38 @@ resource "kubernetes_namespace_v1" "monitoring" {
 }
 
 ##################################
-# Prometheus + Grafana (Autopilot SAFE)
+# LimitRange (Autopilot Guardrail)
+##################################
+resource "kubernetes_limit_range_v1" "monitoring_limits" {
+  metadata {
+    name      = "monitoring-limits"
+    namespace = kubernetes_namespace_v1.monitoring.metadata[0].name
+  }
+
+  spec {
+    limit {
+      type = "Container"
+
+      default_request {
+        cpu    = "100m"
+        memory = "128Mi"
+      }
+
+      default {
+        cpu    = "500m"
+        memory = "512Mi"
+      }
+    }
+  }
+}
+##################################
+# Prometheus + Grafana 
 ##################################
 resource "helm_release" "prometheus" {
-  depends_on = [kubernetes_namespace_v1.monitoring]
+  depends_on = [
+    kubernetes_namespace_v1.monitoring,
+    kubernetes_limit_range_v1.monitoring_limits
+  ]
 
   name       = "prometheus"
   namespace  = kubernetes_namespace_v1.monitoring.metadata[0].name
@@ -21,9 +49,6 @@ resource "helm_release" "prometheus" {
   repository = "https://prometheus-community.github.io/helm-charts"
   chart      = "kube-prometheus-stack"
 
-  ##################################
-  # Stability (CRITICAL)
-  ##################################
   timeout         = 1200
   wait            = false
   atomic          = false
@@ -34,7 +59,7 @@ resource "helm_release" "prometheus" {
     <<EOF
 
 ##################################
-# 🚫 HARD DISABLE (Autopilot blockers)
+# Disable infra collectors (Autopilot)
 ##################################
 nodeExporter:
   enabled: false
@@ -64,37 +89,42 @@ kubeDns:
   enabled: false
 
 ##################################
-# 🚫 Disable operator webhook
+# Prometheus Operator (lightweight)
 ##################################
 prometheusOperator:
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+
   admissionWebhooks:
     enabled: false
 
 ##################################
-# 🚫 Disable ServiceMonitor auto-discovery
+# Prometheus (FIXED + OPTIMIZED)
 ##################################
 prometheus:
   serviceMonitorSelectorNilUsesHelmValues: false
   podMonitorSelectorNilUsesHelmValues: false
 
-##################################
-# Prometheus (lightweight + SAFE)
-##################################
-prometheus:
   prometheusSpec:
     replicas: 1
     retention: "6h"
 
+    # ❗ Autopilot-friendly sizing (not too small, not too big)
     resources:
       requests:
-        cpu: "50m"
-        memory: "128Mi"
+        cpu: "300m"
+        memory: "512Mi"
       limits:
-        cpu: "200m"
-        memory: "256Mi"
+        cpu: "700m"
+        memory: "1Gi"
+
+    # ❗ No PVC → avoids scheduling + cost issues
+    storageSpec: {}
 
 ##################################
-# Grafana (wired)
+# Grafana (secured + stable)
 ##################################
 grafana:
   enabled: true
@@ -102,16 +132,20 @@ grafana:
   adminUser: admin
   adminPassword: admin123
 
+  # ❗ safer than LoadBalancer in Autopilot
   service:
-    type: LoadBalancer
+    type: ClusterIP
+
+  ingress:
+    enabled: false
 
   resources:
     requests:
-      cpu: "25m"
-      memory: "64Mi"
-    limits:
       cpu: "100m"
-      memory: "128Mi"
+      memory: "256Mi"
+    limits:
+      cpu: "300m"
+      memory: "512Mi"
 
   additionalDataSources:
     - name: Prometheus
@@ -126,19 +160,25 @@ grafana:
       label: grafana_dashboard
 
 ##################################
-# kube-state-metrics (SAFE)
+# kube-state-metrics
 ##################################
 kubeStateMetrics:
   resources:
     requests:
-      cpu: "25m"
-      memory: "64Mi"
-    limits:
-      cpu: "50m"
+      cpu: "100m"
       memory: "128Mi"
+    limits:
+      cpu: "200m"
+      memory: "256Mi"
 
 ##################################
-# Disable default rules
+# Alertmanager disabled
+##################################
+alertmanager:
+  enabled: false
+
+##################################
+# Disable default rules (reduce noise)
 ##################################
 defaultRules:
   create: false
