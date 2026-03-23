@@ -35,6 +35,24 @@ resource "kubernetes_limit_range_v1" "monitoring_limits" {
   }
 }
 ##################################
+# ResourceQuota (Autopilot Guardrail)
+##################################
+resource "kubernetes_resource_quota_v1" "monitoring" {
+  metadata {
+    name      = "monitoring-quota"
+    namespace = kubernetes_namespace_v1.monitoring.metadata[0].name
+  }
+
+  spec {
+    hard = {
+      "requests.cpu"    = "2"
+      "requests.memory" = "4Gi"
+      "limits.cpu"      = "4"
+      "limits.memory"   = "8Gi"
+    }
+  }
+}
+##################################
 # Prometheus + Grafana 
 ##################################
 resource "helm_release" "prometheus" {
@@ -98,7 +116,12 @@ prometheusOperator:
       memory: "128Mi"
 
   admissionWebhooks:
-    enabled: false
+    enabled: true
+    patch:
+      resources:
+        requests:
+          cpu: "50m"
+          memory: "64Mi"
 
 ##################################
 # Prometheus (FIXED + OPTIMIZED)
@@ -108,8 +131,12 @@ prometheus:
   podMonitorSelectorNilUsesHelmValues: false
 
   prometheusSpec:
-    replicas: 1
-    retention: "6h"
+    priorityClassName: system-cluster-critical
+      replicas: 1
+      retention: "6h"
+      walCompression: true
+      scrapeInterval: 30s
+      evaluationInterval: 30s
 
     # ❗ Autopilot-friendly sizing (not too small, not too big)
     resources:
