@@ -53,9 +53,6 @@ jobs:
           echo "env=$ENV" >> $GITHUB_OUTPUT
           echo "project_id=$PROJECT_ID" >> $GITHUB_OUTPUT
 
-      ##################################
-      # ⚡ Cache Terraform
-      ##################################
       - name: Cache Terraform
         uses: actions/cache@v4
         with:
@@ -78,9 +75,12 @@ jobs:
             -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
             -backend-config="prefix=terraform/${{ steps.setenv.outputs.env }}"
 
-      ##################################
-      # 🎯 Targeted Plan
-      ##################################
+      # ✅ Added basic validation
+      - name: Terraform Format & Validate
+        run: |
+          terraform fmt -check
+          terraform validate
+
       - name: Terraform Plan
         run: |
           TARGET=""
@@ -149,10 +149,13 @@ jobs:
         run: |
           terraform apply -auto-approve -parallelism=20 \
             -target=module.network \
-            -target=module.gke
+            -target=module.gke \
+            -var="environment=${{ needs.plan.outputs.env }}" \
+            -var="project_id=${{ needs.plan.outputs.project_id }}" \
+            -var="db_password=${{ secrets.DB_PASSWORD }}"
 
 ########################################
-# APPLY HELM (GENERIC + SELECTIVE)
+# APPLY HELM
 ########################################
   apply-helm:
     runs-on: ubuntu-latest
@@ -182,19 +185,20 @@ jobs:
             -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
             -backend-config="prefix=terraform/${{ needs.plan.outputs.env }}"
 
-      ##################################
-      # 🔥 SMART HELM APPLY
-      ##################################
-      - name: Apply Helm (Selective or All)
+      - name: Apply Helm
         run: |
           if [[ -n "${{ github.event.inputs.helm_target }}" ]]; then
-            echo "Deploying specific Helm release: ${{ github.event.inputs.helm_target }}"
             terraform apply -auto-approve -parallelism=20 \
-              -target=helm_release.${{ github.event.inputs.helm_target }}
+              -target=helm_release.${{ github.event.inputs.helm_target }} \
+              -var="environment=${{ needs.plan.outputs.env }}" \
+              -var="project_id=${{ needs.plan.outputs.project_id }}" \
+              -var="db_password=${{ secrets.DB_PASSWORD }}"
           else
-            echo "Deploying ALL Helm releases"
             terraform apply -auto-approve -parallelism=20 \
-              -target=helm_release
+              -target=helm_release \
+              -var="environment=${{ needs.plan.outputs.env }}" \
+              -var="project_id=${{ needs.plan.outputs.project_id }}" \
+              -var="db_password=${{ secrets.DB_PASSWORD }}"
           fi
 
 ########################################
@@ -228,11 +232,11 @@ jobs:
         run: |
           terraform init \
             -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
-            -backend-config="prefix=terraform/${{ github.event.inputs.environment }}"
+            -backend-config="prefix=terraform/${{ needs.plan.outputs.env }}"
 
       - name: Destroy
         run: |
           terraform destroy -auto-approve \
-            -var="environment=${{ github.event.inputs.environment }}" \
-            -var="project_id=proj-ecom-${{ github.event.inputs.environment }}" \
+            -var="environment=${{ needs.plan.outputs.env }}" \
+            -var="project_id=${{ needs.plan.outputs.project_id }}" \
             -var="db_password=${{ secrets.DB_PASSWORD }}"
