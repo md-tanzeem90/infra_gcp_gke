@@ -10,7 +10,7 @@ resource "kubernetes_namespace_v1" "monitoring" {
 }
 
 ##################################
-# Prometheus + Grafana (Autopilot SAFE + WIRED)
+# Prometheus + Grafana (Autopilot SAFE)
 ##################################
 resource "helm_release" "prometheus" {
   depends_on = [kubernetes_namespace_v1.monitoring]
@@ -32,8 +32,9 @@ resource "helm_release" "prometheus" {
 
   values = [
     <<EOF
+
 ##################################
-# Disable heavy / blocked components
+# 🚫 HARD DISABLE (Autopilot blockers)
 ##################################
 nodeExporter:
   enabled: false
@@ -47,18 +48,37 @@ kubelet:
 kubeProxy:
   enabled: false
 
-alertmanager:
+kubeScheduler:
+  enabled: false
+
+kubeControllerManager:
+  enabled: false
+
+kubeApiServer:
+  enabled: false
+
+coreDns:
+  enabled: false
+
+kubeDns:
   enabled: false
 
 ##################################
-# Disable webhook (FIX TIMEOUT)
+# 🚫 Disable operator webhook
 ##################################
 prometheusOperator:
   admissionWebhooks:
     enabled: false
 
 ##################################
-# Prometheus (lightweight)
+# 🚫 Disable ServiceMonitor auto-discovery
+##################################
+prometheus:
+  serviceMonitorSelectorNilUsesHelmValues: false
+  podMonitorSelectorNilUsesHelmValues: false
+
+##################################
+# Prometheus (lightweight + SAFE)
 ##################################
 prometheus:
   prometheusSpec:
@@ -74,7 +94,7 @@ prometheus:
         memory: "256Mi"
 
 ##################################
-# Grafana (FULLY WIRED)
+# Grafana (wired)
 ##################################
 grafana:
   enabled: true
@@ -93,9 +113,6 @@ grafana:
       cpu: "100m"
       memory: "128Mi"
 
-  ##################################
-  # Datasource (AUTO)
-  ##################################
   additionalDataSources:
     - name: Prometheus
       type: prometheus
@@ -103,27 +120,13 @@ grafana:
       url: http://prometheus-kube-prometheus-prometheus.monitoring.svc.cluster.local:9090
       isDefault: true
 
-  ##################################
-  # Dashboard auto-provisioning
-  ##################################
   sidecar:
     dashboards:
       enabled: true
       label: grafana_dashboard
 
-  dashboardProviders:
-    dashboardproviders.yaml:
-      apiVersion: 1
-      providers:
-        - name: default
-          orgId: 1
-          folder: ""
-          type: file
-          options:
-            path: /var/lib/grafana/dashboards
-
 ##################################
-# kube-state-metrics (required)
+# kube-state-metrics (SAFE)
 ##################################
 kubeStateMetrics:
   resources:
