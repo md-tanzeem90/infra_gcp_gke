@@ -10,10 +10,10 @@ resource "kubernetes_namespace_v1" "monitoring" {
 }
 
 ##################################
-# Prometheus + Grafana
+# Prometheus + Grafana (Autopilot-safe)
 ##################################
 resource "helm_release" "prometheus" {
-  depends_on = [module.gke]
+  depends_on = [kubernetes_namespace_v1.monitoring]
 
   name       = "prometheus"
   namespace  = kubernetes_namespace_v1.monitoring.metadata[0].name
@@ -21,8 +21,37 @@ resource "helm_release" "prometheus" {
   repository = "https://prometheus-community.github.io/helm-charts"
   chart      = "kube-prometheus-stack"
 
+  create_namespace = false
+
   values = [
-    file("${path.module}/prometheus.yaml")
+    <<EOF
+# 🚫 Disable node-level components (NOT allowed in Autopilot)
+nodeExporter:
+  enabled: false
+
+prometheus-node-exporter:
+  enabled: false
+
+kubelet:
+  enabled: false
+
+kubeProxy:
+  enabled: false
+
+# 🚫 Remove affinity issues
+prometheus:
+  prometheusSpec:
+    nodeSelector: {}
+    affinity: {}
+    tolerations: []
+
+grafana:
+  enabled: true
+
+# Avoid kube-system interactions
+defaultRules:
+  create: true
+EOF
   ]
 }
 
@@ -43,7 +72,7 @@ resource "kubernetes_cluster_role_v1" "alloy" {
 
   rule {
     api_groups = [""]
-    resources  = ["pods", "nodes", "services", "endpoints"]
+    resources  = ["pods", "services", "endpoints"]
     verbs      = ["get", "list", "watch"]
   }
 }
@@ -105,9 +134,9 @@ EOF
 }
 
 ##################################
-# Alloy DaemonSet
+# Alloy Deployment (NOT DaemonSet)
 ##################################
-resource "kubernetes_daemon_set_v1" "alloy" {
+resource "kubernetes_deployment_v1" "alloy" {
   depends_on = [
     helm_release.prometheus,
     kubernetes_config_map_v1.alloy_config
@@ -119,6 +148,8 @@ resource "kubernetes_daemon_set_v1" "alloy" {
   }
 
   spec {
+    replicas = 1
+
     selector {
       match_labels = {
         app = "grafana-alloy"
@@ -135,10 +166,6 @@ resource "kubernetes_daemon_set_v1" "alloy" {
       spec {
         service_account_name = kubernetes_service_account_v1.alloy.metadata[0].name
 
-        toleration {
-          operator = "Exists"
-        }
-
         container {
           name  = "alloy"
           image = "grafana/alloy:v1.2.0"
@@ -153,6 +180,7 @@ resource "kubernetes_daemon_set_v1" "alloy" {
 
         volume {
           name = "config"
+
           config_map {
             name = kubernetes_config_map_v1.alloy_config.metadata[0].name
           }
