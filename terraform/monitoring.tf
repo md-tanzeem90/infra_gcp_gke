@@ -22,6 +22,8 @@ resource "helm_release" "prometheus" {
   chart      = "kube-prometheus-stack"
 
   create_namespace = false
+  force_update = true
+  replace      = true
 
   values = [
     <<EOF
