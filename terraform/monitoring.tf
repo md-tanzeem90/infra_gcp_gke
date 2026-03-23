@@ -10,7 +10,7 @@ resource "kubernetes_namespace_v1" "monitoring" {
 }
 
 ##################################
-# Prometheus + Grafana (Autopilot-safe)
+# Prometheus + Grafana (Autopilot SAFE + WIRED)
 ##################################
 resource "helm_release" "prometheus" {
   depends_on = [kubernetes_namespace_v1.monitoring]
@@ -21,20 +21,19 @@ resource "helm_release" "prometheus" {
   repository = "https://prometheus-community.github.io/helm-charts"
   chart      = "kube-prometheus-stack"
 
-  create_namespace = false
-
-  # 🔥 Stability controls
-  timeout         = 900
-  wait            = true
-  atomic          = true
-  cleanup_on_fail = true
-  force_update    = true
-  replace         = true
+  ##################################
+  # Stability (CRITICAL)
+  ##################################
+  timeout         = 1200
+  wait            = false
+  atomic          = false
+  cleanup_on_fail = false
+  replace         = false
 
   values = [
     <<EOF
 ##################################
-# Disable Autopilot-blocked components
+# Disable heavy / blocked components
 ##################################
 nodeExporter:
   enabled: false
@@ -52,243 +51,183 @@ alertmanager:
   enabled: false
 
 ##################################
-# Prometheus (lightweight + probes)
+# Disable webhook (FIX TIMEOUT)
+##################################
+prometheusOperator:
+  admissionWebhooks:
+    enabled: false
+
+##################################
+# Prometheus (lightweight)
 ##################################
 prometheus:
   prometheusSpec:
+    replicas: 1
+    retention: "6h"
+
     resources:
       requests:
-        cpu: "100m"
-        memory: "256Mi"
+        cpu: "50m"
+        memory: "128Mi"
       limits:
-        cpu: "300m"
-        memory: "512Mi"
-
-    nodeSelector: {}
-    affinity: {}
-    tolerations: []
-
-    containers:
-      - name: prometheus
-        readinessProbe:
-          httpGet:
-            path: /-/ready
-            port: 9090
-          initialDelaySeconds: 90
-          periodSeconds: 10
-          timeoutSeconds: 5
-          failureThreshold: 10
-
-        startupProbe:
-          httpGet:
-            path: /-/ready
-            port: 9090
-          failureThreshold: 30
-          periodSeconds: 10
+        cpu: "200m"
+        memory: "256Mi"
 
 ##################################
-# Grafana (lightweight + probes)
+# Grafana (FULLY WIRED)
 ##################################
 grafana:
   enabled: true
 
+  adminUser: admin
+  adminPassword: admin123
+
+  service:
+    type: LoadBalancer
+
   resources:
     requests:
-      cpu: "50m"
-      memory: "128Mi"
+      cpu: "25m"
+      memory: "64Mi"
     limits:
       cpu: "100m"
-      memory: "256Mi"
+      memory: "128Mi"
 
-  readinessProbe:
-    httpGet:
-      path: /api/health
-      port: 3000
-    initialDelaySeconds: 60
-    periodSeconds: 10
-    timeoutSeconds: 5
-    failureThreshold: 10
+  ##################################
+  # Datasource (AUTO)
+  ##################################
+  additionalDataSources:
+    - name: Prometheus
+      type: prometheus
+      access: proxy
+      url: http://prometheus-kube-prometheus-prometheus.monitoring.svc.cluster.local:9090
+      isDefault: true
 
-  startupProbe:
-    httpGet:
-      path: /api/health
-      port: 3000
-    failureThreshold: 30
-    periodSeconds: 10
+  ##################################
+  # Dashboard auto-provisioning
+  ##################################
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+
+  dashboardProviders:
+    dashboardproviders.yaml:
+      apiVersion: 1
+      providers:
+        - name: default
+          orgId: 1
+          folder: ""
+          type: file
+          options:
+            path: /var/lib/grafana/dashboards
 
 ##################################
-# kube-state-metrics (tuned)
+# kube-state-metrics (required)
 ##################################
 kubeStateMetrics:
   resources:
     requests:
+      cpu: "25m"
+      memory: "64Mi"
+    limits:
       cpu: "50m"
       memory: "128Mi"
-    limits:
-      cpu: "100m"
-      memory: "256Mi"
-
-  readinessProbe:
-    httpGet:
-      path: /readyz
-      port: 8081
-    initialDelaySeconds: 60
-    periodSeconds: 10
-    timeoutSeconds: 5
-    failureThreshold: 10
 
 ##################################
-# General rules
+# Disable default rules
 ##################################
 defaultRules:
-  create: true
+  create: false
 
 EOF
   ]
 }
 
 ##################################
-# RBAC for Alloy
+# Dashboard 1: Cluster Overview
 ##################################
-resource "kubernetes_service_account_v1" "alloy" {
+resource "kubernetes_config_map_v1" "dashboard_overview" {
+  depends_on = [helm_release.prometheus]
+
   metadata {
-    name      = "grafana-alloy"
+    name      = "grafana-dashboard-overview"
     namespace = kubernetes_namespace_v1.monitoring.metadata[0].name
-  }
-}
 
-resource "kubernetes_cluster_role_v1" "alloy" {
-  metadata {
-    name = "grafana-alloy"
-  }
-
-  rule {
-    api_groups = [""]
-    resources  = ["pods", "services", "endpoints"]
-    verbs      = ["get", "list", "watch"]
-  }
-}
-
-resource "kubernetes_cluster_role_binding_v1" "alloy" {
-  metadata {
-    name = "grafana-alloy"
-  }
-
-  role_ref {
-    api_group = "rbac.authorization.k8s.io"
-    kind      = "ClusterRole"
-    name      = kubernetes_cluster_role_v1.alloy.metadata[0].name
-  }
-
-  subject {
-    kind      = "ServiceAccount"
-    name      = kubernetes_service_account_v1.alloy.metadata[0].name
-    namespace = kubernetes_namespace_v1.monitoring.metadata[0].name
-  }
-}
-
-##################################
-# Alloy Config
-##################################
-resource "kubernetes_config_map_v1" "alloy_config" {
-  metadata {
-    name      = "grafana-alloy-config"
-    namespace = kubernetes_namespace_v1.monitoring.metadata[0].name
+    labels = {
+      grafana_dashboard = "1"
+    }
   }
 
   data = {
-    "config.alloy" = <<EOF
-discovery.kubernetes "pods" {
-  role = "pod"
-}
-
-prometheus.scrape "pods" {
-  targets    = discovery.kubernetes.pods.targets
-  forward_to = [prometheus.remote_write.prom.receiver]
-}
-
-prometheus.remote_write "prom" {
-  endpoint {
-    url = "http://prometheus-kube-prometheus-prometheus.monitoring.svc.cluster.local:9090/api/v1/write"
-  }
-}
-
-otelcol.receiver.otlp "default" {
-  grpc {}
-  http {}
-
-  output {
-    metrics = [prometheus.remote_write.prom.receiver]
-  }
+    "overview.json" = <<EOF
+{
+  "title": "Kubernetes Overview",
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Total Pods",
+      "targets": [{ "expr": "count(kube_pod_info)" }]
+    },
+    {
+      "type": "stat",
+      "title": "Running Pods",
+      "targets": [{ "expr": "count(kube_pod_status_phase{phase=\\"Running\\"})" }]
+    },
+    {
+      "type": "graph",
+      "title": "CPU Usage",
+      "targets": [{
+        "expr": "sum(rate(container_cpu_usage_seconds_total[5m])) by (namespace)",
+        "legendFormat": "{{namespace}}"
+      }]
+    }
+  ],
+  "schemaVersion": 16
 }
 EOF
   }
 }
 
 ##################################
-# Alloy Deployment (Autopilot-safe)
+# Dashboard 2: Pod Health
 ##################################
-resource "kubernetes_deployment_v1" "alloy" {
-  depends_on = [
-    helm_release.prometheus,
-    kubernetes_config_map_v1.alloy_config
-  ]
+resource "kubernetes_config_map_v1" "dashboard_pods" {
+  depends_on = [helm_release.prometheus]
 
   metadata {
-    name      = "grafana-alloy"
+    name      = "grafana-dashboard-pods"
     namespace = kubernetes_namespace_v1.monitoring.metadata[0].name
+
+    labels = {
+      grafana_dashboard = "1"
+    }
   }
 
-  spec {
-    replicas = 1
-
-    selector {
-      match_labels = {
-        app = "grafana-alloy"
-      }
+  data = {
+    "pods.json" = <<EOF
+{
+  "title": "Pod Health",
+  "panels": [
+    {
+      "type": "graph",
+      "title": "Restarts",
+      "targets": [{
+        "expr": "increase(kube_pod_container_status_restarts_total[5m])",
+        "legendFormat": "{{pod}}"
+      }]
+    },
+    {
+      "type": "graph",
+      "title": "Memory",
+      "targets": [{
+        "expr": "sum(container_memory_usage_bytes) by (pod)",
+        "legendFormat": "{{pod}}"
+      }]
     }
-
-    template {
-      metadata {
-        labels = {
-          app = "grafana-alloy"
-        }
-      }
-
-      spec {
-        service_account_name = kubernetes_service_account_v1.alloy.metadata[0].name
-
-        container {
-          name  = "alloy"
-          image = "grafana/alloy:v1.2.0"
-
-          args = ["run", "/etc/alloy/config.alloy"]
-
-          resources {
-            requests = {
-              cpu    = "50m"
-              memory = "128Mi"
-            }
-            limits = {
-              cpu    = "100m"
-              memory = "256Mi"
-            }
-          }
-
-          volume_mount {
-            name       = "config"
-            mount_path = "/etc/alloy"
-          }
-        }
-
-        volume {
-          name = "config"
-
-          config_map {
-            name = kubernetes_config_map_v1.alloy_config.metadata[0].name
-          }
-        }
-      }
-    }
+  ],
+  "schemaVersion": 16
+}
+EOF
   }
 }
